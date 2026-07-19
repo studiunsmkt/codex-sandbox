@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Pomodoro Tracker - PiP Moderno Integrado
 // @namespace    https://studiuns.marketing/
-// @version      4.8.3
+// @version      4.8.4
 // @description  Exibe o cronômetro real do pomodoro-tracker.com em uma janela PiP moderna, animada e responsiva.
 // @author       Tiago / Studiuns Marketing
 // @match        https://pomodoro-tracker.com/*
@@ -14,7 +14,7 @@
 (() => {
     'use strict';
 
-    const VERSION = '4.8.3';
+    const VERSION = '4.8.4';
 
     const CONFIG = {
         pipWidth: 240,
@@ -472,7 +472,140 @@
         return normalizeText(input.value);
     }
 
+    function readActiveTaskDescription() {
+        const root = findTimerRoot();
+
+        const container =
+            root?.querySelector?.(
+                '.c-timer_description'
+            ) ||
+            document.querySelector(
+                '.c-timer_description'
+            );
+
+        if (!container) {
+            // Estado legítimo: pomodoro solto, sem tarefa vinculada
+            // da lista. Não é falha de seletor, então não logamos
+            // warning aqui — cai no fallback do formulário do topo.
+            return null;
+        }
+
+        const markdownElement =
+            container.querySelector(
+                'todo-current markdown'
+            ) ||
+            container.querySelector('markdown');
+
+        if (!markdownElement) {
+            console.warn(
+                '[Pomodoro PiP] .c-timer_description encontrado, ' +
+                'mas a estrutura interna (todo-current > markdown) ' +
+                'mudou. Revisar o seletor de tarefa ativa.'
+            );
+
+            return null;
+        }
+
+        const rawContent =
+            markdownElement.getAttribute('content');
+
+        const text = normalizeText(
+            markdownElement.textContent
+        );
+
+        if (!text) {
+            return null;
+        }
+
+        return {
+            content: normalizeText(rawContent, text),
+            text
+        };
+    }
+
+    function findCategoryForDescription(content) {
+        if (!content) {
+            return null;
+        }
+
+        let todos = null;
+
+        try {
+            todos = JSON.parse(
+                localStorage.getItem('todos')
+            );
+        } catch (error) {
+            console.warn(
+                '[Pomodoro PiP] Não foi possível ler/parsear ' +
+                'localStorage.todos para resolver a categoria: ' +
+                (error?.message || String(error))
+            );
+
+            return null;
+        }
+
+        if (!todos?.data) {
+            console.warn(
+                '[Pomodoro PiP] localStorage.todos não está no ' +
+                'formato esperado (chave .data ausente).'
+            );
+
+            return null;
+        }
+
+        const normalizedContent = normalizeText(content);
+
+        const match = Object.values(todos.data).find(
+            (entry) => {
+                return (
+                    normalizeText(entry?.description) ===
+                    normalizedContent
+                );
+            }
+        );
+
+        if (!match) {
+            console.warn(
+                '[Pomodoro PiP] Nenhum item de localStorage.todos ' +
+                'bate com a descrição da tarefa ativa. Categoria ' +
+                'não resolvida.'
+            );
+
+            return null;
+        }
+
+        return normalizeText(match.category);
+    }
+
     function getTaskData() {
+        const activeTask = readActiveTaskDescription();
+
+        if (activeTask) {
+            const category = findCategoryForDescription(
+                activeTask.content
+            );
+
+            lastKnownDescription = activeTask.text;
+
+            if (category) {
+                lastKnownCategory = category;
+            }
+
+            return {
+                category: normalizeText(
+                    category || lastKnownCategory,
+                    'Sem categoria'
+                ),
+                description: normalizeText(
+                    lastKnownDescription,
+                    'Sem descrição'
+                )
+            };
+        }
+
+        // Fallback (comportamento v4.8.3): sem tarefa vinculada no
+        // cronômetro, a fonte válida passa a ser o formulário
+        // manual do topo.
         const category = readPomodoroInputValue(
             'categoria',
             'pomo-category',
